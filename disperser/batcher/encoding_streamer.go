@@ -201,11 +201,11 @@ func (e *EncodingStreamer) dedupRequests(metadatas []*disperser.BlobMetadata, re
 
 func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan EncodingResultOrStatus) error {
 	stageTimer := time.Now()
-	// pull new blobs and send to encoder
 	e.mu.Lock()
+	defer e.mu.Unlock()
+	// pull new blobs and send to encoder
 	metadatas, newExclusiveStartKey, err := e.blobStore.GetBlobMetadataByStatusWithPagination(ctx, disperser.Processing, int32(e.StreamerConfig.MaxBlobsToFetchFromStore), e.exclusiveStartKey)
 	e.exclusiveStartKey = newExclusiveStartKey
-	e.mu.Unlock()
 
 	if err != nil {
 		return fmt.Errorf("error getting blob metadatas: %w", err)
@@ -215,12 +215,7 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 		return nil
 	}
 
-	// read lock to access e.ReferenceBlockNumber
-	e.mu.RLock()
-	referenceBlockNumber := e.ReferenceBlockNumber
-	e.mu.RUnlock()
-
-	if referenceBlockNumber == 0 {
+	if e.ReferenceBlockNumber == 0 {
 		// Update the reference block number for the next iteration
 		blockNumber, err := e.chainState.GetCurrentBlockNumber()
 		if err != nil {
@@ -230,15 +225,12 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 				blockNumber -= e.FinalizationBlockDelay
 			}
 
-			e.mu.Lock()
 			e.ReferenceBlockNumber = blockNumber
-			e.mu.Unlock()
-			referenceBlockNumber = blockNumber
 		}
 	}
 
 	e.logger.Debug("metadata in processing status", "numMetadata", len(metadatas))
-	metadatas = e.dedupRequests(metadatas, referenceBlockNumber)
+	metadatas = e.dedupRequests(metadatas, e.ReferenceBlockNumber)
 	if len(metadatas) == 0 {
 		e.logger.Info("no new metadatas to encode")
 		return nil
@@ -264,7 +256,7 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, e.ChainStateTimeout)
 	defer cancel()
-	state, err := e.getOperatorState(timeoutCtx, metadatas, referenceBlockNumber)
+	state, err := e.getOperatorState(timeoutCtx, metadatas, e.ReferenceBlockNumber)
 	if err != nil {
 		return fmt.Errorf("error getting operator state: %w", err)
 	}
@@ -282,12 +274,12 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 	}
 	e.logger.Debug("retrieved blobs to encode", "numBlobs", len(blobs), "duration", time.Since(stageTimer))
 
-	e.logger.Debug("encoding blobs...", "numBlobs", len(blobs), "blockNumber", referenceBlockNumber)
+	e.logger.Debug("encoding blobs...", "numBlobs", len(blobs), "blockNumber", e.ReferenceBlockNumber)
 
 	for i := range metadatas {
 		metadata := metadatas[i]
 
-		e.RequestEncodingForBlob(ctx, metadata, blobs[metadata.GetBlobKey()], state, referenceBlockNumber, encoderChan)
+		e.requestEncodingForBlob(ctx, metadata, blobs[metadata.GetBlobKey()], state, e.ReferenceBlockNumber, encoderChan)
 	}
 
 	return nil
@@ -299,7 +291,10 @@ type pendingRequestInfo struct {
 	Assignments    map[core.OperatorID]core.Assignment
 }
 
-func (e *EncodingStreamer) RequestEncodingForBlob(ctx context.Context, metadata *disperser.BlobMetadata, blob *core.Blob, state *core.IndexedOperatorState, referenceBlockNumber uint, encoderChan chan EncodingResultOrStatus) {
+// RequestEncodingForBlob takes a single blob and its metadata and asynchronously sends an encoding request to the encoder service for each quorum.
+// It marks the blob as "requested" in EncodedBlobStore and sends the results to `encoderChan`.
+// NOTE: this method is not thread safe as it mutates the shared state (e.encodingCtxCancelFuncs) without locking.
+func (e *EncodingStreamer) requestEncodingForBlob(ctx context.Context, metadata *disperser.BlobMetadata, blob *core.Blob, state *core.IndexedOperatorState, referenceBlockNumber uint, encoderChan chan EncodingResultOrStatus) {
 
 	// Validate the encoding parameters for each quorum
 
@@ -374,9 +369,7 @@ func (e *EncodingStreamer) RequestEncodingForBlob(ctx context.Context, metadata 
 		// If the reference block number changes, we need to cancel all outstanding encoding requests
 		// and re-request them with the new reference block number
 		encodingCtx, cancel := context.WithTimeout(ctx, e.EncodingRequestTimeout)
-		e.mu.Lock()
 		e.encodingCtxCancelFuncs = append(e.encodingCtxCancelFuncs, cancel)
-		e.mu.Unlock()
 		e.Pool.Submit(func() {
 			defer cancel()
 			start := time.Now()
