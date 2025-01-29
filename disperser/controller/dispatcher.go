@@ -144,6 +144,7 @@ func (d *Dispatcher) HandleBatch(ctx context.Context) (chan core.SigningMessage,
 
 	batch := batchData.Batch
 	state := batchData.OperatorState
+
 	sigChan := make(chan core.SigningMessage, len(state.IndexedOperators))
 	for opID, op := range state.IndexedOperators {
 		opID := opID
@@ -273,7 +274,7 @@ func (d *Dispatcher) HandleSignatures(ctx context.Context, batchData *batchData,
 	nonZeroQuorums := make([]core.QuorumID, 0)
 	quorumResults := make(map[core.QuorumID]uint8)
 	for quorumID, quorumResult := range quorumAttestation.QuorumResults {
-		d.logger.Debug("quorum attestation results", "quorumID", quorumID, "result", quorumResult)
+		d.logger.Debug("quorum attestation results", "batchHeaderHash", batchHeaderHash, "quorumID", quorumID, "result", quorumResult)
 		if quorumResult.PercentSigned > 0 {
 			nonZeroQuorums = append(nonZeroQuorums, quorumID)
 			quorumResults[quorumID] = quorumResult.PercentSigned
@@ -490,6 +491,19 @@ func (d *Dispatcher) NewBatch(ctx context.Context, referenceBlockNumber uint64) 
 	}
 
 	d.logger.Debug("new batch", "referenceBlockNumber", referenceBlockNumber, "numBlobs", len(certs))
+	for i, k := range keys {
+		c, ok := certsMap[k]
+		if !ok {
+			d.logger.Error("blob certificate not found", "batchHeaderHash", hex.EncodeToString(batchHeaderHash[:]), "blobKey", k.Hex())
+		}
+		d.logger.Debug("blob key", "batchHeaderHash", hex.EncodeToString(batchHeaderHash[:]), "blobKey", keys[i].Hex(), "quorums", fmt.Sprint(c.BlobHeader.QuorumNumbers))
+	}
+	for q, ops := range state.Operators {
+		for opID := range ops {
+			d.logger.Debug("operator", "batchHeaderHash", hex.EncodeToString(batchHeaderHash[:]), "quorum", q, "operator", opID.Hex())
+		}
+	}
+
 	return &batchData{
 		Batch: &corev2.Batch{
 			BatchHeader:      batchHeader,

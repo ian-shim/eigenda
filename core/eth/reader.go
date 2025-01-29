@@ -464,6 +464,7 @@ func (t *Reader) GetOperatorStakesForQuorums(ctx context.Context, quorums []core
 	}
 
 	// state_ is a [][]*opstateretriever.OperatorStake with the same length and order as quorumBytes, and then indexed by operator index
+	t.logger.Debug("OpStateRetriever.GetOperatorState", "regCoordAddr", t.bindings.RegCoordinatorAddr.Hex(), "quorumBytes", hex.EncodeToString(quorumBytes), "blockNumber", blockNumber)
 	state_, err := t.bindings.OpStateRetriever.GetOperatorState(&bind.CallOpts{
 		Context: ctx,
 	}, t.bindings.RegCoordinatorAddr, quorumBytes, blockNumber)
@@ -475,13 +476,22 @@ func (t *Reader) GetOperatorStakesForQuorums(ctx context.Context, quorums []core
 	state := make(core.OperatorStakes, len(state_))
 	for i := range state_ {
 		quorumID := quorums[i]
+		t.logger.Debug("OpStateRetriever.GetOperatorState: _state", "i", i, "quorumID", quorumID, "operatorCount", len(state_[i]))
 		state[quorumID] = make(map[core.OperatorIndex]core.OperatorStake, len(state_[i]))
 		for j, op := range state_[i] {
+			t.logger.Debug("OpStateRetriever.GetOperatorState: _state", "operatorIndex", j, "operatorID", core.OperatorID(op.OperatorId).Hex(), "stake", op.Stake)
 			operatorIndex := core.OperatorIndex(j)
 			state[quorumID][operatorIndex] = core.OperatorStake{
 				Stake:      op.Stake,
 				OperatorID: op.OperatorId,
 			}
+		}
+	}
+
+	for quorumID, ops := range state {
+		t.logger.Debug("GetOperatorStakesForQuorums called with", "quorums", fmt.Sprint(quorums), "blockNumber", blockNumber)
+		for operatorIndex, op := range ops {
+			t.logger.Debug("GetOperatorStakesForQuorums", "quorumID", quorumID, "operatorIndex", operatorIndex, "operatorID", op.OperatorID.Hex(), "stake", op.Stake)
 		}
 	}
 

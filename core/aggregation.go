@@ -237,7 +237,10 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 		for opInd, nsk := range nonSignerKeys {
 			ops := state.Operators[quorumID]
 			if _, ok := ops[nonSignerOperatorIds[opInd]]; ok {
+				a.Logger.Debug("subtracting non-signer pubkey from quorum aggregate key", "quorumID", quorumID, "operatorID", nonSignerOperatorIds[opInd].Hex())
 				signersAggKey.Sub(nsk)
+			} else {
+				a.Logger.Debug("signer pubkey in quorum", "quorumID", quorumID, "operatorID", nonSignerOperatorIds[opInd].Hex())
 			}
 		}
 
@@ -250,6 +253,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 			return nil, err
 		}
 		if !ok {
+			a.Logger.Debug("aggregated public key does not match on-chain aggregate public key", "quorumID", quorumID, "aggregatedPubKey", hexutil.Encode(aggPubKeys[quorumID].Serialize()), "onChainAggPubKey", hexutil.Encode(signersAggKey.Serialize()))
 			return nil, ErrPubKeysNotEqual
 		}
 

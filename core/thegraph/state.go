@@ -2,9 +2,11 @@ package thegraph
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"time"
 
 	"github.com/Layr-Labs/eigenda/core"
@@ -129,6 +131,20 @@ func (ics *indexedChainState) GetIndexedOperatorState(ctx context.Context, block
 		return nil, err
 	}
 
+	max := big.NewInt(0).SetUint64(0xffffffff)
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		panic(err)
+	}
+
+	randomNumber := uint32(n.Uint64())
+	ics.logger.Debug("GetIndexedOperatorState", "blockNumber", blockNumber, "quorums", fmt.Sprint(quorums), "id", randomNumber)
+	for quorumID, operators := range operatorState.Operators {
+		for operatorID := range operators {
+			ics.logger.Debug("GetIndexedOperatorState: Operator", "quorumID", quorumID, "operatorID", operatorID.Hex(), "blockNumber", blockNumber, "id", randomNumber)
+		}
+	}
+
 	aggregatePublicKeys := ics.getQuorumAPKs(ctx, quorums, uint32(blockNumber))
 	aggKeys := make(map[uint8]*core.G1Point)
 	for _, apk := range aggregatePublicKeys {
@@ -163,8 +179,16 @@ func (ics *indexedChainState) GetIndexedOperatorState(ctx context.Context, block
 	// Filter out the operators who are not part of any quorum. This can happen if the operator registers or re-registers
 	// after the reference block number.
 	for operatorID := range indexedOperators {
+		ics.logger.Debug("GetIndexedOperatorState: IndexedOperator", "operatorID", operatorID.Hex(), "blockNumber", blockNumber, "id", randomNumber)
 		if _, ok := operatorSeen[operatorID]; !ok {
 			delete(indexedOperators, operatorID)
+			ics.logger.Debug("GetIndexedOperatorState: Operator not found in operator state", "operatorID", operatorID.Hex(), "blockNumber", blockNumber, "id", randomNumber)
+		}
+	}
+
+	for quorumID, operators := range operatorState.Operators {
+		for operatorID := range operators {
+			ics.logger.Debug("GetIndexedOperatorState: Final Operators", "quorumID", quorumID, "operatorID", operatorID.Hex(), "blockNumber", blockNumber, "id", randomNumber)
 		}
 	}
 
